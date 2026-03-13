@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Tuple, Optional
 
 from app import schemas
 from app.core.config import settings
+from app.db import SessionFactory
 from app.db.downloadhistory_oper import DownloadHistoryOper
 from app.db.mediaserver_oper import MediaServerOper
 from app.db.models.mediaserver import MediaServerItem
@@ -23,7 +24,7 @@ class MediaOneDelete(_PluginBase):
     plugin_name = "联动一键删除"
     plugin_desc = "在 MoviePilot 内联动删除 qBittorrent 任务、源文件、媒体库文件和媒体映射。"
     plugin_icon = "delete.jpg"
-    plugin_version = "0.1.0"
+    plugin_version = "0.1.1"
     plugin_author = "Codex"
     author_url = "https://github.com"
     plugin_config_prefix = "mediaonedelete_"
@@ -375,16 +376,19 @@ class MediaOneDelete(_PluginBase):
         }
 
     def _find_media_items(self, dest: str, title: str, year: str, media_type: str) -> List[MediaServerItem]:
-        session = self._mediaserver_oper._db
-        query = session.query(MediaServerItem)
-        exact = query.filter(MediaServerItem.path == dest).all()
-        if exact:
-            return exact
-        return query.filter(
-            MediaServerItem.title == title,
-            MediaServerItem.year == str(year),
-            MediaServerItem.item_type == media_type,
-        ).all()
+        session = SessionFactory()
+        try:
+            query = session.query(MediaServerItem)
+            exact = query.filter(MediaServerItem.path == dest).all()
+            if exact:
+                return exact
+            return query.filter(
+                MediaServerItem.title == title,
+                MediaServerItem.year == str(year),
+                MediaServerItem.item_type == media_type,
+            ).all()
+        finally:
+            session.close()
 
     def _delete_torrent(self, download_hash: str, downloader_name: str) -> bool:
         try:
@@ -432,7 +436,7 @@ class MediaOneDelete(_PluginBase):
                 break
 
     def _cleanup_media_rows(self, dest: str, title: str, year: str, media_type: str):
-        session = self._mediaserver_oper._db
+        session = SessionFactory()
         try:
             deleted = session.query(MediaServerItem).filter(MediaServerItem.path == dest).delete()
             if not deleted:
@@ -445,6 +449,8 @@ class MediaOneDelete(_PluginBase):
         except Exception as err:
             session.rollback()
             logger.error("清理媒体映射失败：%s", err, exc_info=True)
+        finally:
+            session.close()
 
     def _refresh_emby(self):
         services = self._mediaserver_helper.get_services(name_filters=["Emby"])

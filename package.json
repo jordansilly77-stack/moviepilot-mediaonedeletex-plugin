@@ -3,12 +3,13 @@
     "name": "联动一键删除",
     "description": "在 MoviePilot 内根据整理历史联动删除 qBittorrent 任务、源文件、媒体库文件与媒体映射。",
     "labels": "媒体,删除,Emby,qBittorrent",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "icon": "delete.jpg",
     "author": "Codex",
     "level": 1,
     "v2": true,
     "history": {
+      "v0.1.1": "修复媒体映射查询会话问题。",
       "v0.1.0": "首个版本，支持电影的联动删除与最近记录展示。"
     }
   }

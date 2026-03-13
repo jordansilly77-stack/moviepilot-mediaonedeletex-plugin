@@ -1,4 +1,4 @@
-# MoviePilot MediaOneDelete
+# MoviePilot MediaOneDeleteX
 
 为 MoviePilot V2 提供电影联动一键删除能力。
 

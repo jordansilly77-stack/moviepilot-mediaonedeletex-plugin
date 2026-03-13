@@ -20,14 +20,14 @@ from app.schemas.types import NotificationType
 from .core import build_delete_plan, iter_empty_parent_candidates
 
 
-class MediaOneDelete(_PluginBase):
+class MediaOneDeleteX(_PluginBase):
     plugin_name = "联动一键删除"
     plugin_desc = "在 MoviePilot 内联动删除 qBittorrent 任务、源文件、媒体库文件和媒体映射。"
     plugin_icon = "delete.jpg"
-    plugin_version = "0.1.1"
+    plugin_version = "0.1.2"
     plugin_author = "Codex"
     author_url = "https://github.com"
-    plugin_config_prefix = "mediaonedelete_"
+    plugin_config_prefix = "mediaonedeletex_"
     plugin_order = 66
     auth_level = 1
 

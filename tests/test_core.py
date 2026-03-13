@@ -6,10 +6,10 @@ import sys
 MODULE_PATH = (
     Path(__file__).resolve().parents[1]
     / "plugins.v2"
-    / "mediaonedelete"
+    / "mediaonedeletex"
     / "core.py"
 )
-SPEC = importlib.util.spec_from_file_location("mediaonedelete_core", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location("mediaonedeletex_core", MODULE_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 sys.modules[SPEC.name] = MODULE

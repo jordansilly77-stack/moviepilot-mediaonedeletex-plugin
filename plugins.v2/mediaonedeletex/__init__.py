@@ -17,14 +17,14 @@ from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas.types import NotificationType
 
-from .core import build_delete_plan, iter_empty_parent_candidates
+from .core import build_delete_plan, filter_display_items, iter_empty_parent_candidates
 
 
 class MediaOneDeleteX(_PluginBase):
     plugin_name = "联动一键删除"
     plugin_desc = "在 MoviePilot 内联动删除 qBittorrent 任务、源文件、媒体库文件和媒体映射。"
     plugin_icon = "delete.jpg"
-    plugin_version = "0.1.2"
+    plugin_version = "0.2.0"
     plugin_author = "Codex"
     author_url = "https://github.com"
     plugin_config_prefix = "mediaonedeletex_"
@@ -35,6 +35,10 @@ class MediaOneDeleteX(_PluginBase):
     _notify = True
     _search_keyword = ""
     _result_limit = 20
+    _dashboard_limit = 6
+    _movies_only = True
+    _eligible_only = True
+    _dedupe_titles = True
     _delete_transfer_history = True
     _delete_download_history = True
 
@@ -50,6 +54,10 @@ class MediaOneDeleteX(_PluginBase):
             self._notify = bool(config.get("notify", True))
             self._search_keyword = (config.get("search_keyword") or "").strip()
             self._result_limit = int(config.get("result_limit") or 20)
+            self._dashboard_limit = int(config.get("dashboard_limit") or 6)
+            self._movies_only = bool(config.get("movies_only", True))
+            self._eligible_only = bool(config.get("eligible_only", True))
+            self._dedupe_titles = bool(config.get("dedupe_titles", True))
             self._delete_transfer_history = bool(config.get("delete_transfer_history", True))
             self._delete_download_history = bool(config.get("delete_download_history", True))
 
@@ -118,6 +126,45 @@ class MediaOneDeleteX(_PluginBase):
                                     {
                                         "component": "VSwitch",
                                         "props": {
+                                            "model": "movies_only",
+                                            "label": "仅看电影",
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 3},
+                                "content": [
+                                    {
+                                        "component": "VSwitch",
+                                        "props": {
+                                            "model": "eligible_only",
+                                            "label": "仅看可删项",
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 3},
+                                "content": [
+                                    {
+                                        "component": "VSwitch",
+                                        "props": {
+                                            "model": "dedupe_titles",
+                                            "label": "同名去重",
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 3},
+                                "content": [
+                                    {
+                                        "component": "VSwitch",
+                                        "props": {
                                             "model": "delete_download_history",
                                             "label": "清理下载历史",
                                         },
@@ -138,21 +185,35 @@ class MediaOneDeleteX(_PluginBase):
                                         "props": {
                                             "model": "search_keyword",
                                             "label": "搜索关键词",
-                                            "placeholder": "留空显示最近整理的电影",
+                                            "placeholder": "保存后按标题、源路径或库路径过滤",
                                         },
                                     }
                                 ],
                             },
                             {
                                 "component": "VCol",
-                                "props": {"cols": 12, "md": 4},
+                                "props": {"cols": 12, "md": 2},
                                 "content": [
                                     {
                                         "component": "VTextField",
                                         "props": {
                                             "model": "result_limit",
-                                            "label": "结果数量",
+                                            "label": "详情数量",
                                             "placeholder": "20",
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 2},
+                                "content": [
+                                    {
+                                        "component": "VTextField",
+                                        "props": {
+                                            "model": "dashboard_limit",
+                                            "label": "首页数量",
+                                            "placeholder": "6",
                                         },
                                     }
                                 ],
@@ -171,7 +232,7 @@ class MediaOneDeleteX(_PluginBase):
                                         "props": {
                                             "type": "warning",
                                             "variant": "tonal",
-                                            "text": "当前版本仅支持电影。保存配置后，进入插件详情页查看候选项并点击“彻底删除”。删除会同时处理 qBittorrent、源文件、媒体库文件和 MoviePilot 残留映射。",
+                                            "text": "当前版本仍只支持电影删除。建议默认保持“仅看电影 + 仅看可删项 + 同名去重”开启；保存配置后，详情页和首页仪表盘都会同步显示候选删除项。",
                                         },
                                     }
                                 ],
@@ -185,6 +246,10 @@ class MediaOneDeleteX(_PluginBase):
             "notify": True,
             "search_keyword": "",
             "result_limit": 20,
+            "dashboard_limit": 6,
+            "movies_only": True,
+            "eligible_only": True,
+            "dedupe_titles": True,
             "delete_transfer_history": True,
             "delete_download_history": True,
         }
@@ -193,33 +258,18 @@ class MediaOneDeleteX(_PluginBase):
         if not self._enabled:
             return [self._empty_page("插件未启用，先到配置页开启后再使用。")]
 
-        items = self._collect_candidates()
+        items = self._collect_candidates(
+            keyword=self._search_keyword,
+            limit=self._result_limit,
+            movies_only=self._movies_only,
+            eligible_only=self._eligible_only,
+            dedupe_titles=self._dedupe_titles,
+        )
         if not items:
-            return [self._empty_page("没有找到可展示的电影整理记录。")]
+            return [self._empty_page("没有找到符合当前筛选条件的候选项。")]
 
         cards: List[dict] = []
         for item in items:
-            delete_button = {
-                "component": "VBtn",
-                "props": {
-                    "color": "error",
-                    "variant": "tonal",
-                    "disabled": not item["eligible"],
-                },
-                "text": "彻底删除",
-            }
-            if item["eligible"]:
-                delete_button["events"] = {
-                    "click": {
-                        "api": f"plugin/{self.__class__.__name__}/remove",
-                        "method": "post",
-                        "params": {
-                            "transfer_id": item["transfer_id"],
-                            "apikey": settings.API_TOKEN,
-                        },
-                    }
-                }
-
             cards.append(
                 {
                     "component": "VCard",
@@ -255,12 +305,56 @@ class MediaOneDeleteX(_PluginBase):
                         },
                         {
                             "component": "VCardActions",
-                            "content": [delete_button],
+                            "content": [self._build_delete_button(item)],
                         },
                     ],
                 }
             )
         return cards
+
+    def get_dashboard_meta(self) -> Optional[List[Dict[str, str]]]:
+        return [{"key": "quick_delete", "name": "联动删除"}]
+
+    def get_dashboard(self, key: str = None, **kwargs) -> Optional[Tuple[Dict[str, Any], Dict[str, Any], List[dict]]]:
+        items = self._collect_candidates(
+            keyword="",
+            limit=self._dashboard_limit,
+            movies_only=True,
+            eligible_only=True,
+            dedupe_titles=True,
+        )
+        cols = {"cols": 12, "md": 4}
+        attrs = {
+            "title": "联动删除",
+            "subtitle": "首页快速删除入口",
+        }
+        if not items:
+            return cols, attrs, [self._empty_page("当前没有可直接删除的电影。")]
+
+        elements: List[dict] = []
+        for item in items:
+            elements.append(
+                {
+                    "component": "VCard",
+                    "props": {"class": "mb-2"},
+                    "content": [
+                        {
+                            "component": "VCardTitle",
+                            "props": {"class": "text-subtitle-1"},
+                            "text": f"{item['title']} ({item['year']})",
+                        },
+                        {
+                            "component": "VCardText",
+                            "text": f"库路径：{item['dest']}",
+                        },
+                        {
+                            "component": "VCardActions",
+                            "content": [self._build_delete_button(item)],
+                        },
+                    ],
+                }
+            )
+        return cols, attrs, elements
 
     def remove_media(self, transfer_id: int, apikey: str):
         if apikey != settings.API_TOKEN:
@@ -321,16 +415,33 @@ class MediaOneDeleteX(_PluginBase):
     def stop_service(self):
         return
 
-    def _collect_candidates(self) -> List[dict]:
-        limit = max(1, min(self._result_limit, 50))
-        if self._search_keyword:
-            records = self._transferhis.get_by_title(self._search_keyword)[:limit]
-        else:
-            records = self._transferhis.list_by_date("1970-01-01 00:00:00")[:limit]
-        candidates = []
+    def _collect_candidates(
+        self,
+        *,
+        keyword: str,
+        limit: int,
+        movies_only: bool,
+        eligible_only: bool,
+        dedupe_titles: bool,
+    ) -> List[dict]:
+        result_limit = max(1, min(limit, 50))
+        scan_limit = max(result_limit * 8, 200)
+        records = self._transferhis.list_by_date("1970-01-01 00:00:00")[:scan_limit]
+        candidates: List[dict] = []
         for transfer in records:
+            if movies_only and transfer.type != "电影":
+                continue
+            if keyword and not self._record_matches_keyword(transfer, keyword):
+                continue
             candidates.append(self._build_candidate(transfer))
-        return candidates
+        return filter_display_items(
+            candidates,
+            keyword=keyword,
+            movies_only=movies_only,
+            eligible_only=eligible_only,
+            dedupe_titles=dedupe_titles,
+            limit=result_limit,
+        )
 
     def _build_candidate(self, transfer) -> dict:
         media_items = self._find_media_items(transfer.dest, transfer.title, transfer.year, transfer.type)
@@ -462,6 +573,40 @@ class MediaOneDeleteX(_PluginBase):
                     service.instance.refresh_root_library()
             except Exception as err:
                 logger.error("刷新Emby失败：%s", err, exc_info=True)
+
+    def _build_delete_button(self, item: dict) -> dict:
+        button = {
+            "component": "VBtn",
+            "props": {
+                "color": "error",
+                "variant": "tonal",
+                "disabled": not item["eligible"],
+            },
+            "text": "彻底删除",
+        }
+        if item["eligible"]:
+            button["events"] = {
+                "click": {
+                    "api": f"plugin/{self.__class__.__name__}/remove",
+                    "method": "post",
+                    "params": {
+                        "transfer_id": item["transfer_id"],
+                        "apikey": settings.API_TOKEN,
+                    },
+                }
+            }
+        return button
+
+    @staticmethod
+    def _record_matches_keyword(transfer, keyword: str) -> bool:
+        normalized = (keyword or "").strip().lower()
+        if not normalized:
+            return True
+        haystack = " ".join(
+            str(value or "")
+            for value in (transfer.title, transfer.src, transfer.dest)
+        ).lower()
+        return normalized in haystack
 
     @staticmethod
     def _empty_page(text: str) -> dict:

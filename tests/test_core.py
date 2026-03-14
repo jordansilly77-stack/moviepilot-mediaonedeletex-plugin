@@ -16,6 +16,7 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 build_delete_plan = MODULE.build_delete_plan
+filter_display_items = MODULE.filter_display_items
 iter_empty_parent_candidates = MODULE.iter_empty_parent_candidates
 
 
@@ -63,3 +64,74 @@ def test_iter_empty_parent_candidates_stops_at_configured_root():
         "/volume1/video/电影/动画电影/疯狂动物城2 (2025)",
         "/volume1/video/电影/动画电影",
     ]
+
+
+def test_filter_display_items_keeps_movies_and_deduplicates_same_title():
+    items = [
+        {"title": "疯狂动物城2", "year": "2025", "media_type": "电影", "eligible": True},
+        {"title": "疯狂动物城2", "year": "2025", "media_type": "电影", "eligible": False},
+        {"title": "夜色正浓", "year": "2026", "media_type": "电视剧", "eligible": False},
+    ]
+
+    result = filter_display_items(
+        items,
+        keyword="",
+        movies_only=True,
+        eligible_only=False,
+        dedupe_titles=True,
+        limit=20,
+    )
+
+    assert result == [
+        {"title": "疯狂动物城2", "year": "2025", "media_type": "电影", "eligible": True},
+    ]
+
+
+def test_filter_display_items_filters_by_keyword_across_paths():
+    items = [
+        {
+            "title": "至尊马蒂",
+            "year": "2025",
+            "media_type": "电影",
+            "src": "/media/qbdownloads/电影/外语电影/Marty.Supreme.2025.mkv",
+            "dest": "/media/电影/外语电影/至尊马蒂 (2025)/至尊马蒂 (2025).mkv",
+            "eligible": True,
+        },
+        {
+            "title": "示例电影",
+            "year": "2024",
+            "media_type": "电影",
+            "src": "/media/qbdownloads/电影/示例电影.mkv",
+            "dest": "/media/电影/示例电影/示例电影.mkv",
+            "eligible": True,
+        },
+    ]
+
+    result = filter_display_items(
+        items,
+        keyword="marty",
+        movies_only=True,
+        eligible_only=False,
+        dedupe_titles=True,
+        limit=20,
+    )
+
+    assert [item["title"] for item in result] == ["至尊马蒂"]
+
+
+def test_filter_display_items_can_hide_ineligible_items():
+    items = [
+        {"title": "可删电影", "year": "2025", "media_type": "电影", "eligible": True},
+        {"title": "不可删电影", "year": "2025", "media_type": "电影", "eligible": False},
+    ]
+
+    result = filter_display_items(
+        items,
+        keyword="",
+        movies_only=True,
+        eligible_only=True,
+        dedupe_titles=True,
+        limit=20,
+    )
+
+    assert [item["title"] for item in result] == ["可删电影"]

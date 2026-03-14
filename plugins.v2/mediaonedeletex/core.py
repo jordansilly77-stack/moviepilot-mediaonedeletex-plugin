@@ -67,3 +67,44 @@ def iter_empty_parent_candidates(path: str, stop_paths: Iterable[str]) -> list[P
         candidates.append(current)
         current = current.parent
     return candidates
+
+
+def filter_display_items(
+    items: list[dict],
+    *,
+    keyword: str,
+    movies_only: bool,
+    eligible_only: bool,
+    dedupe_titles: bool,
+    limit: int,
+) -> list[dict]:
+    normalized_keyword = (keyword or "").strip().lower()
+    filtered: list[dict] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+
+    for item in items:
+        if movies_only and item.get("media_type") != "电影":
+            continue
+        if eligible_only and not item.get("eligible"):
+            continue
+        if normalized_keyword:
+            haystack = " ".join(
+                str(item.get(field) or "")
+                for field in ("title", "src", "dest", "reason_text")
+            ).lower()
+            if normalized_keyword not in haystack:
+                continue
+        if dedupe_titles:
+            dedupe_key = (
+                str(item.get("title") or "").strip().lower(),
+                str(item.get("year") or "").strip().lower(),
+                str(item.get("media_type") or "").strip().lower(),
+            )
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
+        filtered.append(item)
+        if len(filtered) >= max(1, limit):
+            break
+
+    return filtered

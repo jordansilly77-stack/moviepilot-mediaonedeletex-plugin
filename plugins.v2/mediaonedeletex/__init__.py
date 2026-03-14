@@ -30,7 +30,7 @@ class MediaOneDeleteX(_PluginBase):
     plugin_name = "联动一键删除"
     plugin_desc = "在 MoviePilot 内联动删除 qBittorrent 任务、源文件、媒体库文件和媒体映射。"
     plugin_icon = "delete.jpg"
-    plugin_version = "0.2.1"
+    plugin_version = "0.2.2"
     plugin_author = "Codex"
     author_url = "https://github.com"
     plugin_config_prefix = "mediaonedeletex_"
@@ -418,7 +418,10 @@ class MediaOneDeleteX(_PluginBase):
         self._cleanup_media_rows(item["dest"], item["title"], item["year"], item["media_type"])
 
         if self._delete_transfer_history:
-            self._transferhis.delete(transfer.id)
+            if item["stale_only"]:
+                self._cleanup_stale_transfer_rows(item["title"], item["year"], item["media_type"])
+            else:
+                self._transferhis.delete(transfer.id)
 
         download_history = item.get("download_history")
         if self._delete_download_history and download_history:
@@ -605,6 +608,13 @@ class MediaOneDeleteX(_PluginBase):
             logger.error("清理媒体映射失败：%s", err, exc_info=True)
         finally:
             session.close()
+
+    def _cleanup_stale_transfer_rows(self, title: str, year: str, media_type: str):
+        histories = self._transferhis.get_by(title=title, year=year, mtype=media_type)
+        for history in histories or []:
+            candidate = self._build_candidate(history)
+            if candidate.get("stale_only"):
+                self._transferhis.delete(history.id)
 
     def _refresh_emby(self):
         services = self._mediaserver_helper.get_services(name_filters=["Emby"])

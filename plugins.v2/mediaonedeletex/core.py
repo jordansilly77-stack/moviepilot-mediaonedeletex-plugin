@@ -108,3 +108,17 @@ def filter_display_items(
             break
 
     return filtered
+
+
+def is_stale_history_candidate(*, src_exists: bool, dest_exists: bool, media_item_count: int) -> bool:
+    return (not src_exists) and (not dest_exists) and media_item_count <= 0
+
+
+def slice_page_items(items: list[dict], *, page: int, page_size: int) -> tuple[list[dict], int, int]:
+    safe_page_size = max(1, page_size)
+    total = len(items)
+    total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
+    current_page = min(max(1, page), total_pages)
+    start = (current_page - 1) * safe_page_size
+    end = start + safe_page_size
+    return items[start:end], total_pages, current_page

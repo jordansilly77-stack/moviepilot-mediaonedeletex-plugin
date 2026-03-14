@@ -17,6 +17,8 @@ SPEC.loader.exec_module(MODULE)
 
 build_delete_plan = MODULE.build_delete_plan
 filter_display_items = MODULE.filter_display_items
+is_stale_history_candidate = MODULE.is_stale_history_candidate
+slice_page_items = MODULE.slice_page_items
 iter_empty_parent_candidates = MODULE.iter_empty_parent_candidates
 
 
@@ -135,3 +137,25 @@ def test_filter_display_items_can_hide_ineligible_items():
     )
 
     assert [item["title"] for item in result] == ["可删电影"]
+
+
+def test_is_stale_history_candidate_requires_all_live_targets_gone():
+    assert is_stale_history_candidate(
+        src_exists=False,
+        dest_exists=False,
+        media_item_count=0,
+    ) is True
+    assert is_stale_history_candidate(
+        src_exists=True,
+        dest_exists=False,
+        media_item_count=0,
+    ) is False
+
+
+def test_slice_page_items_returns_expected_window_and_total_pages():
+    items = [{"index": idx} for idx in range(1, 8)]
+    page_items, total_pages, current_page = slice_page_items(items, page=2, page_size=3)
+
+    assert page_items == [{"index": 4}, {"index": 5}, {"index": 6}]
+    assert total_pages == 3
+    assert current_page == 2

@@ -17,14 +17,20 @@ from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas.types import NotificationType
 
-from .core import build_delete_plan, filter_display_items, iter_empty_parent_candidates
+from .core import (
+    build_delete_plan,
+    filter_display_items,
+    is_stale_history_candidate,
+    iter_empty_parent_candidates,
+    slice_page_items,
+)
 
 
 class MediaOneDeleteX(_PluginBase):
     plugin_name = "联动一键删除"
     plugin_desc = "在 MoviePilot 内联动删除 qBittorrent 任务、源文件、媒体库文件和媒体映射。"
     plugin_icon = "delete.jpg"
-    plugin_version = "0.2.0"
+    plugin_version = "0.2.1"
     plugin_author = "Codex"
     author_url = "https://github.com"
     plugin_config_prefix = "mediaonedeletex_"
@@ -75,6 +81,12 @@ class MediaOneDeleteX(_PluginBase):
                 "endpoint": self.remove_media,
                 "methods": ["POST"],
                 "summary": "联动删除媒体",
+            },
+            {
+                "path": "/change_page",
+                "endpoint": self.change_page,
+                "methods": ["GET"],
+                "summary": "切换插件页码",
             }
         ]
 
@@ -260,7 +272,7 @@ class MediaOneDeleteX(_PluginBase):
 
         items = self._collect_candidates(
             keyword=self._search_keyword,
-            limit=self._result_limit,
+            limit=max(self._result_limit * 5, 100),
             movies_only=self._movies_only,
             eligible_only=self._eligible_only,
             dedupe_titles=self._dedupe_titles,
@@ -268,8 +280,18 @@ class MediaOneDeleteX(_PluginBase):
         if not items:
             return [self._empty_page("没有找到符合当前筛选条件的候选项。")]
 
+        current_page = self._get_current_page()
+        page_items, total_pages, current_page = slice_page_items(
+            items,
+            page=current_page,
+            page_size=self._result_limit,
+        )
+        if current_page != self._get_current_page():
+            self._set_current_page(current_page)
+
         cards: List[dict] = []
-        for item in items:
+        cards.append(self._build_pagination_card(current_page, total_pages))
+        for item in page_items:
             cards.append(
                 {
                     "component": "VCard",
@@ -371,7 +393,7 @@ class MediaOneDeleteX(_PluginBase):
         errors: List[str] = []
         download_hash = item["download_hash"]
         downloader_name = item["downloader"]
-        if download_hash and downloader_name:
+        if download_hash and downloader_name and not item["stale_only"]:
             if not self._delete_torrent(download_hash, downloader_name):
                 errors.append("qBittorrent任务删除失败")
 
@@ -383,9 +405,9 @@ class MediaOneDeleteX(_PluginBase):
         if not dest_deleted and Path(item["dest"]).exists():
             errors.append("媒体库文件删除失败")
 
-        if Path(item["src"]).exists():
+        if item["src"] and Path(item["src"]).exists():
             errors.append("源文件仍存在")
-        if Path(item["dest"]).exists():
+        if item["dest"] and Path(item["dest"]).exists():
             errors.append("媒体库文件仍存在")
 
         if errors:
@@ -408,9 +430,16 @@ class MediaOneDeleteX(_PluginBase):
             self.post_message(
                 mtype=NotificationType.Plugin,
                 title="【联动一键删除】",
-                text=f"{item['title']} ({item['year']}) 已完成联动删除",
+                text=f"{item['title']} ({item['year']}) 已完成{'残留清理' if item['stale_only'] else '联动删除'}",
             )
-        return schemas.Response(success=True, message="联动删除完成")
+        return schemas.Response(success=True, message="残留清理完成" if item["stale_only"] else "联动删除完成")
+
+    def change_page(self, delta: int, apikey: str):
+        if apikey != settings.API_TOKEN:
+            return schemas.Response(success=False, message="API密钥错误")
+        current_page = self._get_current_page()
+        self._set_current_page(max(1, current_page + int(delta)))
+        return schemas.Response(success=True, message="页码已更新")
 
     def stop_service(self):
         return
@@ -469,6 +498,17 @@ class MediaOneDeleteX(_PluginBase):
             plan.eligible = False
             plan.reasons.append("媒体映射存在多条记录")
 
+        src_exists = bool(transfer.src) and Path(transfer.src).exists()
+        dest_exists = bool(transfer.dest) and Path(transfer.dest).exists()
+        stale_only = is_stale_history_candidate(
+            src_exists=src_exists,
+            dest_exists=dest_exists,
+            media_item_count=len(media_items),
+        )
+        if stale_only:
+            plan.eligible = True
+            plan.reasons = ["文件和媒体映射已不存在，可清理历史残留"]
+
         return {
             "transfer_id": transfer.id,
             "title": transfer.title,
@@ -480,6 +520,9 @@ class MediaOneDeleteX(_PluginBase):
             "download_hash": plan.download_hash,
             "item_id": plan.item_id,
             "eligible": plan.eligible,
+            "stale_only": stale_only,
+            "src_exists": src_exists,
+            "dest_exists": dest_exists,
             "reasons": plan.reasons,
             "reason_text": "；".join(plan.reasons) if plan.reasons else "记录完整，可执行联动删除",
             "downloader": transfer.downloader or (download_history.downloader if download_history else ""),
@@ -582,7 +625,7 @@ class MediaOneDeleteX(_PluginBase):
                 "variant": "tonal",
                 "disabled": not item["eligible"],
             },
-            "text": "彻底删除",
+            "text": "清理残留" if item.get("stale_only") else "彻底删除",
         }
         if item["eligible"]:
             button["events"] = {
@@ -607,6 +650,64 @@ class MediaOneDeleteX(_PluginBase):
             for value in (transfer.title, transfer.src, transfer.dest)
         ).lower()
         return normalized in haystack
+
+    def _build_pagination_card(self, current_page: int, total_pages: int) -> dict:
+        prev_button = {
+            "component": "VBtn",
+            "props": {
+                "variant": "text",
+                "disabled": current_page <= 1,
+            },
+            "text": "上一页",
+        }
+        next_button = {
+            "component": "VBtn",
+            "props": {
+                "variant": "text",
+                "disabled": current_page >= total_pages,
+            },
+            "text": "下一页",
+        }
+        if current_page > 1:
+            prev_button["events"] = {
+                "click": {
+                    "api": f"plugin/{self.__class__.__name__}/change_page",
+                    "method": "get",
+                    "params": {"delta": -1, "apikey": settings.API_TOKEN},
+                }
+            }
+        if current_page < total_pages:
+            next_button["events"] = {
+                "click": {
+                    "api": f"plugin/{self.__class__.__name__}/change_page",
+                    "method": "get",
+                    "params": {"delta": 1, "apikey": settings.API_TOKEN},
+                }
+            }
+        return {
+            "component": "VCard",
+            "props": {"class": "mb-3"},
+            "content": [
+                {
+                    "component": "VCardText",
+                    "text": f"第 {current_page}/{total_pages} 页",
+                },
+                {
+                    "component": "VCardActions",
+                    "content": [prev_button, next_button],
+                },
+            ],
+        }
+
+    def _get_current_page(self) -> int:
+        page = self.get_data("current_page")
+        try:
+            return max(1, int(page or 1))
+        except (TypeError, ValueError):
+            return 1
+
+    def _set_current_page(self, page: int):
+        self.save_data("current_page", max(1, int(page)))
 
     @staticmethod
     def _empty_page(text: str) -> dict:
